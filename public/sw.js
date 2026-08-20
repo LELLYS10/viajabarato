@@ -1,0 +1,1 @@
+const CACHE='viajabarato-v1';self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/styles.css','/app.js','/manifest.json']))));self.addEventListener('fetch',e=>{if(!e.request.url.includes('/api/'))e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)))});
