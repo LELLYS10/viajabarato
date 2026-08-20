@@ -1,0 +1,31 @@
+const http = require('node:http');
+const { readFile, stat } = require('node:fs/promises');
+const path = require('node:path');
+
+const publicDir = path.join(__dirname, 'public');
+const airports = [
+  ['PMW','Palmas','Tocantins',-10.29,-48.36], ['AUX','Araguaína','Tocantins',-7.23,-48.24],
+  ['GRU','São Paulo','São Paulo',-23.44,-46.47], ['CGH','São Paulo','São Paulo',-23.63,-46.66],
+  ['BSB','Brasília','Distrito Federal',-15.87,-47.92], ['GIG','Rio de Janeiro','Rio de Janeiro',-22.81,-43.25],
+  ['SSA','Salvador','Bahia',-12.91,-38.33], ['REC','Recife','Pernambuco',-8.13,-34.92], ['FLN','Florianópolis','Santa Catarina',-27.67,-48.55]
+].map(([iata, city, state, lat, lon]) => ({ iata, city, state, lat, lon, country: 'Brasil' }));
+const byIata = Object.fromEntries(airports.map(a => [a.iata, a]));
+const distance = (a,b) => { const r=6371, d=x=>x*Math.PI/180, q=d(b.lat-a.lat), w=d(b.lon-a.lon); const h=Math.sin(q/2)**2+Math.cos(d(a.lat))*Math.cos(d(b.lat))*Math.sin(w/2)**2; return r*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h)); };
+const duration = minutes => `${Math.floor(minutes / 60)}h ${minutes % 60 || ''}`.trim();
+const fmtTime = mins => `${String(Math.floor((mins % 1440) / 60)).padStart(2,'0')}:${String(mins % 60).padStart(2,'0')}`;
+function flights(q) {
+  const origin = byIata[(q.origin || 'PMW').toUpperCase()] || byIata.PMW;
+  const destination = byIata[(q.destination || 'GRU').toUpperCase()] || byIata.GRU;
+  const adults = Math.max(1, Number(q.adults) || 1), km = distance(origin,destination), links = bookingLinks(origin.iata,destination.iata,q);
+  const make = (id, airline, stops, via, factor) => { const mins=Math.round(km/12+35+(stops?105:0)); const price=Math.round((380+km*.42)*factor)*adults; const dep=stops?'06:15':'08:30'; const arrival=fmtTime((stops?375:510)+mins); return {id,airline,stops,via,minutes:mins,duration:duration(mins),price,departure:dep,arrival,links,badge:stops?'Melhor preço':'Mais rápido'}; };
+  let results = [make('eco','GOL',1,byIata.BSB,.72), make('direct','LATAM',0,null,1), make('flex','Azul',1,byIata.CGH,.80)];
+  if (q.maxStops === '0') results = results.filter(f => !f.stops);
+  return results.sort((a,b) => q.sort === 'duration' ? a.minutes-b.minutes : a.price-b.price);
+}
+function bookingLinks(from,to,q) { const dep=q.departDate || '', ret=q.returnDate ? `/${q.returnDate}` : ''; return { google:`https://www.google.com/travel/flights?q=Flights%20from%20${from}%20to%20${to}%20on%20${dep}`, skyscanner:`https://www.skyscanner.com.br/transporte/passagens-aereas/${from.toLowerCase()}/${to.toLowerCase()}/${dep.replaceAll('-','').slice(2)}/${q.returnDate ? q.returnDate.replaceAll('-','').slice(2) : ''}`, kayak:`https://www.kayak.com.br/flights/${from}-${to}/${dep}${ret}` }; }
+const hotels = [{name:'Grand Hotel & Suites Prime',rating:'9,4',night:390,badge:'Melhor custo-benefício',features:['Café incluso','Piscina','Wi-Fi'],photo:'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1000&q=80'}, {name:'Comfort Inn Express',rating:'8,8',night:195,badge:'Mais econômico',features:['Perto do metrô','Café incluso','Recepção 24h'],photo:'https://images.unsplash.com/photo-1551882547-ff40c63fe5fa?auto=format&fit=crop&w=1000&q=80'}, {name:'Boutique Garden & Spa',rating:'9,1',night:280,badge:'Mais charmoso',features:['Spa','Restaurante','Jardim'],photo:'https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?auto=format&fit=crop&w=1000&q=80'}];
+const resorts = [{name:'Paradise Beach Resort & Spa',rating:'9,6',night:890,badge:'All inclusive premium',features:['Refeições e bebidas','Parque aquático','Spa e sauna'],photo:'https://images.unsplash.com/photo-1540541338287-41700207dee6?auto=format&fit=crop&w=1000&q=80'}, {name:'Vila Imperial Eco Resort',rating:'9,3',night:720,badge:'Família & crianças',features:['Recreação infantil','Open bar','Esportes náuticos'],photo:'https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=1000&q=80'}];
+const tours = [{name:'City tour histórico e panorâmico',rating:'4,9',price:85,badge:'Mais popular',features:['Guia credenciado','Transporte','Ingressos'],photo:'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1000&q=80'}, {name:'Passeio de barco e piscinas naturais',rating:'5,0',price:130,badge:'Imperdível',features:['Snorkel','Frutas a bordo','Paradas para banho'],photo:'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80'}, {name:'Trilhas, cachoeiras e safari',rating:'4,8',price:160,badge:'Aventura',features:['Almoço','Instrutor','Equipamentos'],photo:'https://images.unsplash.com/photo-1433086966358-54859d0ed716?auto=format&fit=crop&w=1000&q=80'}];
+function json(res, data) { res.writeHead(200, {'content-type':'application/json; charset=utf-8'}); res.end(JSON.stringify(data)); }
+const mime = {'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml'};
+http.createServer(async (req,res) => { const url=new URL(req.url,'http://localhost'); const q=Object.fromEntries(url.searchParams); if(url.pathname==='/api/airports'){const term=(q.q||'').toLowerCase();return json(res,{airports:airports.filter(a=>`${a.iata} ${a.city} ${a.state}`.toLowerCase().includes(term)).slice(0,8)});} if(url.pathname==='/api/flights') return json(res,{flights:flights(q)}); if(url.pathname==='/api/stays') {const nights=Math.max(1,Number(q.nights)||7), guests=Math.max(1,Number(q.guests)||1), list=q.type==='resorts'?resorts:hotels;return json(res,{items:list.map(x=>({...x,total:x.night*nights*Math.ceil(guests/2)}))});} if(url.pathname==='/api/tours') {const guests=Math.max(1,Number(q.guests)||1);return json(res,{items:tours.map(x=>({...x,total:x.price*guests}))});} let file=url.pathname==='/'?'index.html':url.pathname.replace(/^\/+/, ''); const safe=path.normalize(file).replace(/^\.\.(\/|\\|$)/,''); try {const full=path.join(publicDir,safe); await stat(full); const body=await readFile(full); res.writeHead(200,{'content-type':mime[path.extname(full)]||'application/octet-stream'});res.end(body);} catch {res.writeHead(404);res.end('Not found');} }).listen(process.env.PORT||3000,()=>console.log('ViajaBarato em http://localhost:3000'));
